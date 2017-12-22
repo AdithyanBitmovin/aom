@@ -1413,6 +1413,8 @@ static void encode_b(const AV1_COMP *const cpi, TileDataEnc *tile_data,
                      PARTITION_TYPE partition,
 #endif
                      PICK_MODE_CONTEXT *ctx, int *rate) {
+  printf("Inside encode_b for (%d,%d) \n", mi_row, mi_col);
+
   TileInfo *const tile = &tile_data->tile_info;
   MACROBLOCK *const x = &td->mb;
 #if CONFIG_EXT_DELTA_Q
@@ -1467,6 +1469,7 @@ static void encode_sb(const AV1_COMP *const cpi, ThreadData *td,
                       TileDataEnc *tile_data, TOKENEXTRA **tp, int mi_row,
                       int mi_col, RUN_TYPE dry_run, BLOCK_SIZE bsize,
                       PC_TREE *pc_tree, int *rate) {
+  printf("Inside encode_sb function for (%d,%d) \n", mi_row, mi_col);
   const AV1_COMMON *const cm = &cpi->common;
   MACROBLOCK *const x = &td->mb;
   MACROBLOCKD *const xd = &x->e_mbd;
@@ -2437,6 +2440,9 @@ static void rd_pick_partition(const AV1_COMP *const cpi, ThreadData *td,
                               int mi_row, int mi_col, BLOCK_SIZE bsize,
                               RD_STATS *rd_cost, int64_t best_rd,
                               PC_TREE *pc_tree, int64_t *none_rd) {
+
+  printf("Inside rd_pick_partition for (%d,%d) \n", mi_row, mi_col);
+
   const AV1_COMMON *const cm = &cpi->common;
   TileInfo *const tile_info = &tile_data->tile_info;
   MACROBLOCK *const x = &td->mb;
@@ -3271,9 +3277,11 @@ static void encode_rd_sb_row(AV1_COMP *cpi, ThreadData *td,
   }
 #endif
 
+  printf("Starting encoding row : %d\n", mi_row);
   // Code each SB in the row
   for (mi_col = tile_info->mi_col_start; mi_col < tile_info->mi_col_end;
        mi_col += cm->mib_size) {
+    printf("Starting encoding (row, column) = (%d,%d)\n", mi_row, mi_col);
     const struct segmentation *const seg = &cm->seg;
     int dummy_rate;
     int64_t dummy_dist;
@@ -3396,13 +3404,16 @@ static void encode_rd_sb_row(AV1_COMP *cpi, ThreadData *td,
                        &dummy_rate, &dummy_dist, 1, pc_root);
     } else {
       // If required set upper and lower partition size limits
+      // Adithyan : This could be setting the minimum and maximum partition
+      // sf->auto_min_max_partition_size -> This value shall be set based on the previous values.
       if (sf->auto_min_max_partition_size) {
         set_offsets(cpi, tile_info, x, mi_row, mi_col, cm->sb_size);
         rd_auto_partition_range(cpi, tile_info, xd, mi_row, mi_col,
                                 &x->min_partition_size, &x->max_partition_size);
       }
+      printf("Picking partition for (mi_row, mi_col) : (%d, %d)\n", mi_row, mi_col);
       rd_pick_partition(cpi, td, tile_data, tp, mi_row, mi_col, cm->sb_size,
-                        &dummy_rdc, INT64_MAX, pc_root, NULL);
+                        &dummy_rdc, INT64_MAX, pc_root, NULL);  
     }
 #if CONFIG_LPF_SB
     if (USE_LOOP_FILTER_SUPERBLOCK) {
