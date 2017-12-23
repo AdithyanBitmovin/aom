@@ -65,6 +65,8 @@
 #define IF_HBD(...)
 #endif  // CONFIG_HIGHBITDEPTH
 
+#define ADI_DEBUG 0
+
 static void encode_superblock(const AV1_COMP *const cpi, TileDataEnc *tile_data,
                               ThreadData *td, TOKENEXTRA **t, RUN_TYPE dry_run,
                               int mi_row, int mi_col, BLOCK_SIZE bsize,
@@ -1413,7 +1415,8 @@ static void encode_b(const AV1_COMP *const cpi, TileDataEnc *tile_data,
                      PARTITION_TYPE partition,
 #endif
                      PICK_MODE_CONTEXT *ctx, int *rate) {
-  printf("Inside encode_b for (%d,%d) \n", mi_row, mi_col);
+  if (ADI_DEBUG)
+	printf("Inside encode_b for (%d,%d) \n", mi_row, mi_col);
 
   TileInfo *const tile = &tile_data->tile_info;
   MACROBLOCK *const x = &td->mb;
@@ -1469,7 +1472,8 @@ static void encode_sb(const AV1_COMP *const cpi, ThreadData *td,
                       TileDataEnc *tile_data, TOKENEXTRA **tp, int mi_row,
                       int mi_col, RUN_TYPE dry_run, BLOCK_SIZE bsize,
                       PC_TREE *pc_tree, int *rate) {
-  printf("Inside encode_sb function for (%d,%d) \n", mi_row, mi_col);
+  if(ADI_DEBUG)
+	printf("Inside encode_sb function for (%d,%d) \n", mi_row, mi_col);
   const AV1_COMMON *const cm = &cpi->common;
   MACROBLOCK *const x = &td->mb;
   MACROBLOCKD *const xd = &x->e_mbd;
@@ -2441,8 +2445,6 @@ static void rd_pick_partition(const AV1_COMP *const cpi, ThreadData *td,
                               RD_STATS *rd_cost, int64_t best_rd,
                               PC_TREE *pc_tree, int64_t *none_rd) {
 
-  printf("Inside rd_pick_partition for (%d,%d) \n", mi_row, mi_col);
-
   const AV1_COMMON *const cm = &cpi->common;
   TileInfo *const tile_info = &tile_data->tile_info;
   MACROBLOCK *const x = &td->mb;
@@ -2480,6 +2482,10 @@ static void rd_pick_partition(const AV1_COMP *const cpi, ThreadData *td,
 
   BLOCK_SIZE min_size = x->min_partition_size;
   BLOCK_SIZE max_size = x->max_partition_size;
+
+  // TODO-Adi : This the place, where we determine the depth it can split to in each of the nodes.
+  if(ADI_DEBUG)
+	printf("Inside rd_pick_partition for (%d,%d)\n", mi_row, mi_col);
 
   if (none_rd) *none_rd = 0;
 
@@ -3245,6 +3251,30 @@ static void rd_pick_partition(const AV1_COMP *const cpi, ThreadData *td,
   }
 }
 
+// A function to print out the partition structure
+void write_out_partition_structure(int mi_row, int mi_col, BLOCK_SIZE bsize,
+                                   PC_TREE *pc_tree){
+
+
+  BLOCK_SIZE subsize;
+  const int mi_step = mi_size_wide[bsize] / 2;
+
+  if (pc_tree->partitioning != PARTITION_SPLIT)
+	printf("Terminate (mi_row,mi_col)-(%d, %d). Mode-%d. bsize-%d, mi_step-%d\n",
+			mi_row, mi_col, pc_tree->partitioning, bsize, mi_step);
+  else{
+    subsize = get_subsize(bsize, PARTITION_SPLIT);
+    printf("Splitting (mi_row, mi_col) - (%d, %d). Mode - %d\n",
+			mi_row, mi_col, pc_tree->partitioning);
+	for(int idx=0; idx<4; idx++){
+	  const int x_idx = (idx & 1) * mi_step;
+	  const int y_idx = (idx >> 1) * mi_step;
+      write_out_partition_structure(mi_row + y_idx, mi_col + x_idx, subsize,
+                                    pc_tree->split[idx]);
+		}
+	}
+}
+
 static void encode_rd_sb_row(AV1_COMP *cpi, ThreadData *td,
                              TileDataEnc *tile_data, int mi_row,
                              TOKENEXTRA **tp) {
@@ -3411,9 +3441,14 @@ static void encode_rd_sb_row(AV1_COMP *cpi, ThreadData *td,
         rd_auto_partition_range(cpi, tile_info, xd, mi_row, mi_col,
                                 &x->min_partition_size, &x->max_partition_size);
       }
-      printf("Picking partition for (mi_row, mi_col) : (%d, %d)\n", mi_row, mi_col);
+
+      printf("Picking partition for (mi_row, mi_col) : (%d, %d) | sb_size : %d\n", mi_row, mi_col, cm->sb_size);
+      //printf("CONFIG_EXT_PARTITION_TYPES : %d\n", CONFIG_EXT_PARTITION_TYPES);
+      //printf("Minimum partition size : %d\n", x->min_partition_size);
       rd_pick_partition(cpi, td, tile_data, tp, mi_row, mi_col, cm->sb_size,
                         &dummy_rdc, INT64_MAX, pc_root, NULL);  
+
+	  write_out_partition_structure(mi_row, mi_col, cm->sb_size, pc_root);
     }
 #if CONFIG_LPF_SB
     if (USE_LOOP_FILTER_SUPERBLOCK) {
