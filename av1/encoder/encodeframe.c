@@ -3259,11 +3259,15 @@ void write_out_partition_structure(const int mi_row, const int mi_col,
   BLOCK_SIZE subsize;
 
   if (pc_tree->partitioning != PARTITION_SPLIT){
-	const unsigned char depth = (unsigned char)log2(mi_size_wide[sb_size]/mi_size_wide[bsize]);
-	const int sizeOfCurrNodeIn4x4 = mi_size_wide[bsize] * mi_size_wide[bsize];
+	int sizeOfCurrNodeIn4x4 = mi_size_wide[bsize] * mi_size_wide[bsize];
+	unsigned char* depth = malloc(sizeOfCurrNodeIn4x4);
+	unsigned char currNodeDepth = (unsigned char)log2(mi_size_wide[sb_size]/mi_size_wide[bsize]);
+	memset(	depth, currNodeDepth, sizeOfCurrNodeIn4x4);
 	debug("Terminate (mi_row,mi_col)-(%d, %d). Mode-%d. bsize-%d, num_elements-%d, depth-%d\n",
-			mi_row, mi_col, pc_tree->partitioning, bsize, num_elements, depth);
-	fwrite(&depth, sizeof(depth), sizeOfCurrNodeIn4x4, m_dataFile);
+		mi_row, mi_col, pc_tree->partitioning, bsize, sizeOfCurrNodeIn4x4, currNodeDepth);
+	//log_info("Writing depth-%u, No. of times-%d", currNodeDepth, sizeOfCurrNodeIn4x4);
+	fwrite(depth, sizeof(unsigned char), sizeOfCurrNodeIn4x4, m_dataFile);
+	free(depth);
   }
   else{
     const int mi_step = mi_size_wide[bsize] / 2;
@@ -4291,7 +4295,7 @@ static void encode_frame_internal(AV1_COMP *cpi) {
 #endif
 
     av1_setup_frame_boundary_info(cm);
-
+    log_info("Encoding frame %d", cm->current_video_frame);
     debug("Encoding frame %d", cm->current_video_frame);
     // If allowed, encoding tiles in parallel with one thread handling one tile.
     // TODO(geza.lore): The multi-threaded encoder is not safe with more than

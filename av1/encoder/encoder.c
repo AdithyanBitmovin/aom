@@ -12,7 +12,6 @@
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
-
 #include "./aom_config.h"
 
 #include "av1/common/alloccommon.h"
@@ -77,6 +76,9 @@ FRAME_COUNTS aggregate_fc;
 // Aggregate frame counts per frame context type
 FRAME_COUNTS aggregate_fc_per_type[FRAME_CONTEXTS];
 #endif  // CONFIG_ENTROPY_STATS
+
+#define NDEBUG_ADI
+#include "dbg.h"
 
 #define AM_SEGMENT_ID_INACTIVE 7
 #define AM_SEGMENT_ID_ACTIVE 0
@@ -4925,6 +4927,7 @@ static void encode_with_recode_loop(AV1_COMP *cpi, size_t *size,
 
     // transform / motion compensation build reconstruction frame
     save_coding_context(cpi);
+    debug("Entering av_encode_frame - %d\n", loop_count);
     av1_encode_frame(cpi);
 
     // Update the skip mb flag probabilities based on the distribution
@@ -5631,8 +5634,10 @@ static void encode_frame_to_data_rate(AV1_COMP *cpi, size_t *size,
 #endif
 
   if (cpi->sf.recode_loop == DISALLOW_RECODE) {
+    debug("Entering - encode_without_recode_loop\n");
     encode_without_recode_loop(cpi);
   } else {
+    debug("Entering - encode_with_recode_loop\n");
     encode_with_recode_loop(cpi, size, dest);
   }
 
