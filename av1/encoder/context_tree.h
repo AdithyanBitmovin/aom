@@ -7,6 +7,7 @@
  * obtain it at www.aomedia.org/license/software. If the Alliance for Open
  * Media Patent License 1.0 was not distributed with this source code in the
  * PATENTS file, you can obtain it at www.aomedia.org/license/patent.
+ * PATENTS file, you can obtain it at www.aomedia.org/license/patent.
  */
 
 #ifndef AV1_ENCODER_CONTEXT_TREE_H_
@@ -83,6 +84,16 @@ typedef struct PC_TREE {
     PICK_MODE_CONTEXT *leaf_split[4];
   };
 } PC_TREE;
+
+// A modified version of PC_TREE for the purpose of storing the reference depth information.
+// At each node, PARTITION_TYPE is either PARTITION_SPLIT or PARTITION_NONE.
+// It cannot take other values.
+typedef struct PC_TREE_DEPTH_REF {
+  int index;
+  PARTITION_TYPE partitioning;
+  BLOCK_SIZE block_size;
+  struct PC_TREE_DEPTH_REF *split[4];
+} PC_TREE_DEPTH_REF;
 
 void av1_setup_pc_tree(struct AV1Common *cm, struct ThreadData *td);
 void av1_free_pc_tree(struct ThreadData *td);

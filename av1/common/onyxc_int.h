@@ -455,6 +455,7 @@ typedef struct AV1Common {
 #endif
 
   unsigned int current_video_frame;
+  unsigned int total_video_frame_encoded;
   BITSTREAM_PROFILE profile;
 
   // AOM_BITS_8 in profile 0 or 1, AOM_BITS_10 or AOM_BITS_12 in profile 2 or 3.

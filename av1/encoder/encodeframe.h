@@ -24,7 +24,8 @@ struct macroblock;
 struct yv12_buffer_config;
 struct AV1_COMP;
 struct ThreadData;
-FILE* m_dataFile;
+FILE* m_dataFileWrite;
+FILE* m_dataFileRead;
 
 void av1_setup_src_planes(struct macroblock *x,
                           const struct yv12_buffer_config *src, int mi_row,

@@ -2612,6 +2612,7 @@ AV1_COMP *av1_create_compressor(AV1EncoderConfig *oxcf,
 #endif
 
   cm->current_video_frame = 0;
+  cm->total_video_frame_encoded = 0;
   cpi->partition_search_skippable_frame = 0;
   cpi->tile_data = NULL;
   cpi->last_show_frame_buf_idx = INVALID_IDX;
@@ -5504,7 +5505,7 @@ static void encode_frame_to_data_rate(AV1_COMP *cpi, size_t *size,
     }
 
     ++cm->current_video_frame;
-
+    ++cm->total_video_frame_encoded;
     aom_free(tile_ctxs);
     aom_free(cdf_ptrs);
     return;
@@ -5571,6 +5572,7 @@ static void encode_frame_to_data_rate(AV1_COMP *cpi, size_t *size,
   if (drop_this_frame) {
     av1_rc_postencode_update_drop_frame(cpi);
     ++cm->current_video_frame;
+    ++cm->total_video_frame_encoded;
     aom_free(tile_ctxs);
     aom_free(cdf_ptrs);
     return;
@@ -5583,6 +5585,7 @@ static void encode_frame_to_data_rate(AV1_COMP *cpi, size_t *size,
     if (av1_rc_drop_frame(cpi)) {
       av1_rc_postencode_update_drop_frame(cpi);
       ++cm->current_video_frame;
+      ++cm->total_video_frame_encoded;
       aom_free(tile_ctxs);
       aom_free(cdf_ptrs);
       return;
@@ -5796,6 +5799,7 @@ static void encode_frame_to_data_rate(AV1_COMP *cpi, size_t *size,
   if (drop_this_frame) {
     av1_rc_postencode_update_drop_frame(cpi);
     ++cm->current_video_frame;
+    ++cm->total_video_frame_encoded;
     aom_free(tile_ctxs);
     aom_free(cdf_ptrs);
     return;
@@ -5828,6 +5832,7 @@ static void encode_frame_to_data_rate(AV1_COMP *cpi, size_t *size,
     // Don't increment frame counters if this was an altref buffer
     // update not a real frame
     ++cm->current_video_frame;
+    ++cm->total_video_frame_encoded;
   }
 
   // NOTE: Shall not refer to any frame not used as reference.
@@ -5847,6 +5852,8 @@ static void encode_frame_to_data_rate(AV1_COMP *cpi, size_t *size,
 
 static void Pass0Encode(AV1_COMP *cpi, size_t *size, uint8_t *dest,
                         int skip_adapt, unsigned int *frame_flags) {
+
+  debug("I am here - Pass0Encode");
 #if CONFIG_XIPHRC
   int64_t ip_count;
   int frame_type, is_golden, is_altref;
@@ -5885,6 +5892,7 @@ static void Pass0Encode(AV1_COMP *cpi, size_t *size, uint8_t *dest,
 #if !CONFIG_XIPHRC
 static void Pass2Encode(AV1_COMP *cpi, size_t *size, uint8_t *dest,
                         unsigned int *frame_flags) {
+  debug("I am here - Pass2Encode");
   encode_frame_to_data_rate(cpi, size, dest, 0, frame_flags);
 
   // Do not do post-encoding update for those frames that do not have a spot in
@@ -6322,6 +6330,7 @@ static int is_integer_mv(AV1_COMP *cpi, const YV12_BUFFER_CONFIG *cur_picture,
 int av1_get_compressed_data(AV1_COMP *cpi, unsigned int *frame_flags,
                             size_t *size, uint8_t *dest, int64_t *time_stamp,
                             int64_t *time_end, int flush) {
+  debug("\nI am here - av1_get_compressed_data");
   const AV1EncoderConfig *const oxcf = &cpi->oxcf;
   AV1_COMMON *const cm = &cpi->common;
   BufferPool *const pool = cm->buffer_pool;

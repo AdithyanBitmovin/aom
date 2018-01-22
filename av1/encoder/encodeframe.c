@@ -66,7 +66,8 @@
 #endif  // CONFIG_HIGHBITDEPTH
 
 #define NDEBUG_ADI
-#define ADI_WRITE_MODE
+//#define ADI_WRITE_MODE
+#define ADI_READ_MODE
 #include "dbg.h"
 
 static void encode_superblock(const AV1_COMP *const cpi, TileDataEnc *tile_data,
@@ -1417,7 +1418,7 @@ static void encode_b(const AV1_COMP *const cpi, TileDataEnc *tile_data,
                      PARTITION_TYPE partition,
 #endif
                      PICK_MODE_CONTEXT *ctx, int *rate) {
-						 
+
   debug("Encoding block (mi_row, mi_col)-(%d,%d)", mi_row, mi_col);
   TileInfo *const tile = &tile_data->tile_info;
   MACROBLOCK *const x = &td->mb;
@@ -2443,7 +2444,11 @@ static void rd_pick_partition(const AV1_COMP *const cpi, ThreadData *td,
                               TileDataEnc *tile_data, TOKENEXTRA **tp,
                               int mi_row, int mi_col, BLOCK_SIZE bsize,
                               RD_STATS *rd_cost, int64_t best_rd,
-                              PC_TREE *pc_tree, int64_t *none_rd) {
+                              PC_TREE *pc_tree,
+                              #ifdef ADI_READ_MODE
+                              PC_TREE_DEPTH_REF* pc_root_ref,
+                              #endif
+                              int64_t *none_rd) {
 
   const AV1_COMMON *const cm = &cpi->common;
   TileInfo *const tile_info = &tile_data->tile_info;
@@ -2496,6 +2501,16 @@ static void rd_pick_partition(const AV1_COMP *const cpi, ThreadData *td,
   int partition_none_allowed = has_rows && has_cols;
   int partition_horz_allowed = has_cols && yss <= xss && bsize_at_least_8x8;
   int partition_vert_allowed = has_rows && xss <= yss && bsize_at_least_8x8;
+
+  // ADI :  If the reference tree structure from a higher quality does not split further down, then do not split.
+  #ifdef ADI_READ_MODE
+  if(pc_root_ref->partitioning == PARTITION_NONE){
+    //log_info("Skipping RD mode");
+    do_square_split = 0;
+    partition_horz_allowed = 0;
+    partition_vert_allowed = 0;
+  }
+  #endif
 
   (void)*tp_orig;
 
@@ -2755,7 +2770,11 @@ static void rd_pick_partition(const AV1_COMP *const cpi, ThreadData *td,
 #endif  // CONFIG_EXT_PARTITION_TYPES
       rd_pick_partition(cpi, td, tile_data, tp, mi_row + y_idx, mi_col + x_idx,
                         subsize, &this_rdc, temp_best_rdcost - sum_rdc.rdcost,
-                        pc_tree->split[idx], p_split_rd);
+                        pc_tree->split[idx],
+                        #ifdef ADI_READ_MODE
+                        pc_root_ref->split[idx],
+                        #endif
+                        p_split_rd);
 
       if (this_rdc.rate == INT_MAX) {
         sum_rdc.rdcost = INT64_MAX;
@@ -2969,8 +2988,13 @@ static void rd_pick_partition(const AV1_COMP *const cpi, ThreadData *td,
   }
 
 #if CONFIG_EXT_PARTITION_TYPES
+
   const int ext_partition_allowed =
-      do_rectangular_split && bsize > BLOCK_8X8 && partition_none_allowed;
+      do_rectangular_split && bsize > BLOCK_8X8 && partition_none_allowed
+      #ifdef ADI_READ_MODE
+          && (pc_root_ref->partitioning != PARTITION_NONE)
+      #endif
+      ;
 
 // partition4_allowed is 1 if we can use a PARTITION_HORZ_4 or PARTITION_VERT_4
 // for this block. This is almost the same as ext_partition_allowed, except
@@ -2984,7 +3008,7 @@ static void rd_pick_partition(const AV1_COMP *const cpi, ThreadData *td,
 #endif
 
 #if CONFIG_EXT_PARTITION_TYPES_AB
-  // The alternative AB partitions are allowed iff the corresponding 4:1
+  // The alternativae AB partitions are allowed iff the corresponding 4:1
   // partitions are allowed.
   int horzab_partition_allowed = partition4_allowed;
   int vertab_partition_allowed = partition4_allowed;
@@ -3249,24 +3273,62 @@ static void rd_pick_partition(const AV1_COMP *const cpi, ThreadData *td,
     assert(tp_orig == *tp);
   }
 }
-
+#ifdef ADI_READ_MODE
 // A function to print out the partition structure
+void read_in_partition_structure(const int mi_row, const int mi_col,
+                                   const BLOCK_SIZE bsize, PC_TREE_DEPTH_REF *pc_tree,
+                                   const BLOCK_SIZE sb_size, const unsigned char* depth_info){
+
+  BLOCK_SIZE subsize;
+  unsigned char curr_node_depth = (unsigned char)log2(mi_size_wide[sb_size]/mi_size_wide[bsize]);
+  const unsigned char curr_node_ref_depth = *depth_info;
+  if (curr_node_ref_depth <= curr_node_depth){
+    pc_tree->partitioning = PARTITION_NONE;
+    #ifndef NDEBUG_ADI
+    int size_of_curr_node_mi = mi_size_wide[bsize] * mi_size_wide[bsize];
+    #endif
+    pc_tree->block_size = bsize;
+    pc_tree->index = 0;
+    debug("Max depth reached at  (mi_row,mi_col)-(%d, %d). Mode-%d.  num_elements-%d. depth-%d",
+      mi_row, mi_col, pc_tree->partitioning, size_of_curr_node_mi, curr_node_depth);
+  }
+  else{
+    pc_tree->partitioning = PARTITION_SPLIT;
+    const int mi_step = mi_size_wide[bsize] / 2;
+    subsize = get_subsize(bsize, PARTITION_SPLIT);
+    int size_of_curr_node_mi = mi_size_wide[subsize] * mi_size_wide[subsize];
+    debug("Reading partition. Splitting (mi_row, mi_col)=(%d, %d). Mode=%d. Current depth=%d. Size of curr node=%d",
+      mi_row, mi_col, pc_tree->partitioning, curr_node_depth, size_of_curr_node_mi);
+
+    for(int idx=0; idx<4; idx++){
+      debug("Adding a offset of = %d to depth_info", idx * size_of_curr_node_mi);
+      const unsigned char* sub_node_ref_depth = depth_info + (idx * size_of_curr_node_mi);
+      pc_tree->split[idx]->index = idx;
+      pc_tree->split[idx]->block_size = bsize;
+      const int x_idx = (idx & 1) * mi_step;
+      const int y_idx = (idx >> 1) * mi_step;
+        read_in_partition_structure(mi_row + y_idx, mi_col + x_idx, subsize,
+                                      pc_tree->split[idx], sb_size, sub_node_ref_depth);
+      }
+	}
+}
+#endif
+
+#ifdef ADI_WRITE_MODE
+// A function to read in the partition structure
 void write_out_partition_structure(const int mi_row, const int mi_col,
                                    const BLOCK_SIZE bsize, const PC_TREE *pc_tree,
                                    const BLOCK_SIZE sb_size){
-
-
   BLOCK_SIZE subsize;
 
   if (pc_tree->partitioning != PARTITION_SPLIT){
-	int sizeOfCurrNodeIn4x4 = mi_size_wide[bsize] * mi_size_wide[bsize];
-	unsigned char* depth = malloc(sizeOfCurrNodeIn4x4);
-	unsigned char currNodeDepth = (unsigned char)log2(mi_size_wide[sb_size]/mi_size_wide[bsize]);
-	memset(	depth, currNodeDepth, sizeOfCurrNodeIn4x4);
+	int size_of_curr_node_mi = mi_size_wide[bsize] * mi_size_wide[bsize];
+	unsigned char* depth = malloc(size_of_curr_node_mi);
+	unsigned char curr_node_depth = (unsigned char)log2(mi_size_wide[sb_size]/mi_size_wide[bsize]);
+	memset(	depth, curr_node_depth, size_of_curr_node_mi);
 	debug("Terminate (mi_row,mi_col)-(%d, %d). Mode-%d. bsize-%d, num_elements-%d, depth-%d\n",
-		mi_row, mi_col, pc_tree->partitioning, bsize, sizeOfCurrNodeIn4x4, currNodeDepth);
-	//log_info("Writing depth-%u, No. of times-%d", currNodeDepth, sizeOfCurrNodeIn4x4);
-	fwrite(depth, sizeof(unsigned char), sizeOfCurrNodeIn4x4, m_dataFile);
+		mi_row, mi_col, pc_tree->partitioning, bsize, size_of_curr_node_mi, curr_node_depth);
+	fwrite(depth, sizeof(unsigned char), size_of_curr_node_mi, m_dataFileWrite);
 	free(depth);
   }
   else{
@@ -3274,18 +3336,49 @@ void write_out_partition_structure(const int mi_row, const int mi_col,
     subsize = get_subsize(bsize, PARTITION_SPLIT);
     debug("Splitting (mi_row, mi_col) - (%d, %d). Mode - %d",
 			mi_row, mi_col, pc_tree->partitioning);
-	for(int idx=0; idx<4; idx++){
-	  const int x_idx = (idx & 1) * mi_step;
-	  const int y_idx = (idx >> 1) * mi_step;
+    for(int idx=0; idx<4; idx++){
+      const int x_idx = (idx & 1) * mi_step;
+      const int y_idx = (idx >> 1) * mi_step;
       write_out_partition_structure(mi_row + y_idx, mi_col + x_idx, subsize,
-                                    pc_tree->split[idx], sb_size);
-		}
+                                      pc_tree->split[idx], sb_size);
+      }
 	}
 }
+#endif
+
+#ifdef ADI_READ_MODE
+// Adi - Confusion cleared
+// Earlier pass pointer to a pointer to a structure, otherwise it would not be call by reference.
+// It would still be call by value
+int set_up_pc_ref_tree(PC_TREE_DEPTH_REF** pc_tree, const BLOCK_SIZE bsize, const int index
+									 , const BLOCK_SIZE sb_size){
+	(*pc_tree) = malloc(sizeof(PC_TREE_DEPTH_REF));
+	(*pc_tree)->block_size = bsize;
+	(*pc_tree)->index = index;
+	unsigned char curr_node_depth = (unsigned char)log2(mi_size_wide[sb_size]/mi_size_wide[bsize]);
+	if(curr_node_depth == MAX_MIB_SIZE_LOG2)
+	{
+		(*pc_tree)->partitioning = PARTITION_NONE;
+		return 0;
+	}
+	(*pc_tree)->partitioning = PARTITION_SPLIT;
+  BLOCK_SIZE subsize;
+  subsize = get_subsize(bsize, PARTITION_SPLIT);
+	for (int idx=0; idx<4; idx++){
+    (*pc_tree)->split[idx] = NULL;
+		set_up_pc_ref_tree( &((*pc_tree)->split[idx]), subsize, idx, sb_size);
+  }
+	return 0;
+}
+#endif
 
 static void encode_rd_sb_row(AV1_COMP *cpi, ThreadData *td,
                              TileDataEnc *tile_data, int mi_row,
-                             TOKENEXTRA **tp) {
+                             TOKENEXTRA **tp
+                             #ifdef ADI_READ_MODE
+                             , unsigned char* depth_info_frame
+                             #endif
+                             ) {
   AV1_COMMON *const cm = &cpi->common;
   const TileInfo *const tile_info = &tile_data->tile_info;
   MACROBLOCK *const x = &td->mb;
@@ -3297,6 +3390,12 @@ static void encode_rd_sb_row(AV1_COMP *cpi, ThreadData *td,
 #else
   const int leaf_nodes = 64;
 #endif  // CONFIG_EXT_PARTITION
+
+#ifdef ADI_READ_MODE
+  PC_TREE_DEPTH_REF* pc_root_ref;
+  pc_root_ref = NULL;
+  set_up_pc_ref_tree(&pc_root_ref, cm->sb_size, 0, cm->sb_size);
+#endif
 
   // Initialize the left context for the new SB row
   av1_zero_left_context(xd);
@@ -3315,10 +3414,20 @@ static void encode_rd_sb_row(AV1_COMP *cpi, ThreadData *td,
   }
 #endif
 
+#ifdef ADI_READ_MODE
+	int nr_SB_encoded;
+	int nr_bytes_depthInfo_SB = (cm->mib_size) * (cm->mib_size);
+	int nr_SB_in_row =  (int)ceil(cm->mi_cols/(double)cm->mib_size);
+#endif
+
   debug("Encoding SB mi_row-%d", mi_row);
   // Code each SB in the row
   for (mi_col = tile_info->mi_col_start; mi_col < tile_info->mi_col_end;
        mi_col += cm->mib_size) {
+#ifdef ADI_READ_MODE
+    nr_SB_encoded = (mi_row/cm->mib_size) * nr_SB_in_row  + (mi_col/cm->mib_size);
+    debug("nr_SB_encoded - %d", nr_SB_encoded);
+#endif
     debug("Encoding SB  (mi_row,mi_col)-(%d,%d)", mi_row, mi_col);
     const struct segmentation *const seg = &cm->seg;
     int dummy_rate;
@@ -3453,11 +3562,22 @@ static void encode_rd_sb_row(AV1_COMP *cpi, ThreadData *td,
       //printf("CONFIG_EXT_PARTITION_TYPES : %d\n", CONFIG_EXT_PARTITION_TYPES);
       //By default CONFIG_EXT_PARTITION_TYPES is enabled
       //printf("Minimum partition size : %d\n", x->min_partition_size);
-      //Default minimum partition size - 4x4 
-      //printf("Maximum partition size : %d\n", x->max_partition_size); 
+      //Default minimum partition size - 4x4
+      //printf("Maximum partition size : %d\n", x->max_partition_size);
+
+#ifdef ADI_READ_MODE
+	  debug("Pointer started from - %d", nr_SB_encoded*nr_bytes_depthInfo_SB);
+	  unsigned char* depth_info_sb = depth_info_frame + nr_SB_encoded*nr_bytes_depthInfo_SB;
+	  read_in_partition_structure(mi_row, mi_col, cm->sb_size,
+	  							pc_root_ref, cm->sb_size, depth_info_sb);
+#endif
 
       rd_pick_partition(cpi, td, tile_data, tp, mi_row, mi_col, cm->sb_size,
-                        &dummy_rdc, INT64_MAX, pc_root, NULL);  
+                        &dummy_rdc, INT64_MAX, pc_root,
+                        #ifdef ADI_READ_MODE
+                        pc_root_ref,
+                        #endif
+                        NULL);
 
 #ifdef ADI_WRITE_MODE
 	  write_out_partition_structure(mi_row, mi_col, cm->sb_size, pc_root, x->max_partition_size);
@@ -3590,6 +3710,15 @@ void av1_init_tile_data(AV1_COMP *cpi) {
   }
 }
 
+// Similiar to fread, but with an additonal functionality of seeking to offset number of bytes.
+size_t fpread(void *buffer, size_t size, size_t nitems, size_t offset, FILE *fp)
+{
+     if (fseek(fp, offset, SEEK_SET) != 0)
+         return 0;
+     debug("The current position of filestream is %lu", ftell(fp));
+     return fread(buffer, size, nitems, fp);
+}
+
 void av1_encode_tile(AV1_COMP *cpi, ThreadData *td, int tile_row,
                      int tile_col) {
   AV1_COMMON *const cm = &cpi->common;
@@ -3631,12 +3760,44 @@ void av1_encode_tile(AV1_COMP *cpi, ThreadData *td, int tile_row,
   td->intrabc_used_this_tile = 0;
 #endif  // CONFIG_INTRABC
 
+#ifdef ADI_READ_MODE
+  size_t bytes_to_read;
+  size_t bytes_read;
+  size_t frame_bytes_offset;
+
+  int nr_sb_in_frame = 	(int)(ceil(cm->mi_rows/(double)cm->mib_size)
+									 *	ceil(cm->mi_cols/(double)cm->mib_size));
+  bytes_to_read = nr_sb_in_frame * (cm->mib_size) * (cm->mib_size);
+  frame_bytes_offset = cm->total_video_frame_encoded * bytes_to_read;
+
+
+  debug("nr_sb_in_frame, bytes_to_read, frame_bytes_offset - %d, %lu, %lu", nr_sb_in_frame, bytes_to_read, frame_bytes_offset);
+
+  unsigned char* depth_info_frame = (unsigned char*)malloc(bytes_to_read);
+  if(!depth_info_frame)
+	log_err("Allocating memory failed.");
+
+  bytes_read = fpread(depth_info_frame, sizeof(unsigned char), bytes_to_read, frame_bytes_offset, m_dataFileRead);
+  if ( bytes_read!= bytes_to_read)
+		log_err("Reading %lu bytes with %lu offset failed.", bytes_to_read, frame_bytes_offset);
+  debug("Bytes read - %lu", bytes_read);
+#endif
+
+  debug("SB_SIZE/MI_SIZE = %d, mi_rows = %d and mi_cols = %d", cm->mib_size,  cm->mi_rows, cm->mi_cols);
+
   for (mi_row = tile_info->mi_row_start; mi_row < tile_info->mi_row_end;
        mi_row += cm->mib_size) {
     debug("Encoding row tile mi_row-%d", mi_row);
-    encode_rd_sb_row(cpi, td, this_tile, mi_row, &tok);
+    encode_rd_sb_row(cpi, td, this_tile, mi_row, &tok
+    #ifdef ADI_READ_MODE
+     , depth_info_frame
+ 	  #endif
+    );
   }
 
+#ifdef ADI_READ_MODE
+  free(depth_info_frame);
+#endif
 #if CONFIG_INTRABC
   cpi->intrabc_used |= td->intrabc_used_this_tile;
 #endif  // CONFIG_INTRABC
@@ -3660,7 +3821,17 @@ static void encode_tiles(AV1_COMP *cpi) {
 
 //Adithyan: Data file for analysis info
 #ifdef ADI_WRITE_MODE
-  m_dataFile = fopen("analysisData.bin", "ab"); // WRITE mode (append, binary)
+  m_dataFileWrite = fopen("analysisData.bin", "ab"); // WRITE mode (append, binary)
+  if(m_dataFileWrite == NULL){
+	  log_err("Error opening analysisData.bin for writing.");
+  }
+#endif
+
+#ifdef ADI_READ_MODE
+  m_dataFileRead = fopen("analysisData.bin", "rb"); // READ mode (read, binary)
+  if(m_dataFileRead == NULL){
+	  log_err("Error opening analysisData.bin for reading.");
+  }
 #endif
 
   for (tile_row = 0; tile_row < cm->tile_rows; ++tile_row)
@@ -3670,9 +3841,13 @@ static void encode_tiles(AV1_COMP *cpi) {
   }
 
 #ifdef ADI_WRITE_MODE
-  fclose(m_dataFile); // Close the analysis file that I opened earlier.
+  if(m_dataFileWrite)  fclose(m_dataFileWrite);
 #endif
-  
+
+#ifdef ADI_READ_MODE
+  if(m_dataFileRead)  fclose(m_dataFileRead);
+#endif
+
 }
 
 #if CONFIG_FP_MB_STATS
@@ -4295,8 +4470,8 @@ static void encode_frame_internal(AV1_COMP *cpi) {
 #endif
 
     av1_setup_frame_boundary_info(cm);
+    debug("Total frames encoded %d", cm->total_video_frame_encoded);
     log_info("Encoding frame %d", cm->current_video_frame);
-    debug("Encoding frame %d", cm->current_video_frame);
     // If allowed, encoding tiles in parallel with one thread handling one tile.
     // TODO(geza.lore): The multi-threaded encoder is not safe with more than
     // 1 tile rows, as it uses the single above_context et al arrays from
